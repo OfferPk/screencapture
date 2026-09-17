@@ -1,0 +1,28 @@
+Browser only (no API key)
+export QUERY="dentists in Lahore"
+export MAX_RESULTS=200
+python maps_runner.py
+# browser runs, if blocked → warns "no API key", writes whatever browser got
+
+Hybrid (recommended):
+export GOOGLE_MAPS_API_KEY="AIza..."
+export QUERY="dentists in Lahore"
+export MAX_RESULTS=300
+python maps_runner.py
+Docker-compose — add the key to the env block:
+
+environment:
+  - QUERY=dentists in Lahore
+  - MAX_RESULTS=300
+  - GOOGLE_MAPS_API_KEY=AIza...
+  - ROTATE_EVERY=150
+volumes:
+  - ./out:/app/out
+cost / behavior notes
+Scenario	Browser does	API does	Cost
+Clean run, 300 results	all 300	nothing	$0
+Blocked at landing, 300 wanted	0	300	~$5
+Blocked at card 120, 300 wanted	120	180 top-up	~$3
+No API key, blocked	whatever scraped	nothing	$0
+No API key, clean	all	nothing	$0
+The API caps at 60 results per query with Text Search. For top-ups above 60, split the query by neighborhood/postal and union — the dedupe pass handles overlaps.
