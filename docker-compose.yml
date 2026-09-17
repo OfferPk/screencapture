@@ -1,0 +1,20 @@
+# language: YAML
+version: "3.9"
+
+services:
+  gmaps-scraper:
+    build: .
+    container_name: gmaps-scraper
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Karachi
+      - QUERY=dentists in Lahore
+      - MAX_RESULTS=500
+    volumes:
+      - ./out:/app/out
+    # no ports — it's a batch job, not a service
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
