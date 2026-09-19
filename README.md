@@ -1,95 +1,168 @@
 # screencapture
-screen capture — GDI BitBlt, DXGI Desktop Duplication
-1. What it is
-A headless-browser scraper. It opens Google Maps in a real Chromium instance, searches a query, scrolls the results feed, clicks each listing, and reads the fields off the page. Output is a CSV.
 
-Flow:
-query → headless chromium → maps search URL → scroll feed → click card → read fields → CSV
+Two related toolsets in one repo:
 
-2. Where to deploy it
-Option	When to use	Notes
-Your own machine	testing, <500 rows, one-off	simplest, residential IP, lowest ban risk
-VPS (Linux, 2GB RAM)	scheduled runs, 1k–5k rows	Hetzner/DigitalOcean; datacenter IP gets flagged faster — pair with residential proxy
-Residential proxy + VPS	production, 10k+ rows	rotate IPs every ~150–200 cards; providers: Bright Data, Oxylabs, Smartproxy
-Docker container	repeatable, portable	bake Chromium + Playwright into the image
-GitHub Actions / cron job	daily/weekly batch	free tier works for small runs; needs proxy for scale
-Cloud function (Lambda/Cloud Run)	event-driven, spiky	tricky — headless Chromium is heavy, cold starts hurt
-Rule of thumb: start on your own machine, move to VPS + residential proxy only when you outgrow a single IP.
+1. **Windows screen capture** (`screencap/`) — GDI BitBlt and DXGI Desktop Duplication to JPEG/PNG.
+2. **Google Maps / Places scrapers** (`maps/`) — Playwright browser scrape with optional Places API (New) fallback, plus Docker scheduling.
 
-3. Setup — one time
-Local (Windows/Mac/Linux):
+---
 
-bash
+## Repository layout
+
+```
+.
+├── screencap/
+│   └── screencap.cpp          # Windows GDI / DXGI capture CLI
+├── maps/
+│   ├── maps_runner.py         # Primary: browser scrape → Places API top-up
+│   ├── places_scraper.py      # Places API (New) only
+│   ├── gmaps_browser_scraper.py  # Simple Playwright-only scraper
+│   └── proxy_rotation.py      # Optional residential proxy helpers
+├── Dockerfile                 # Playwright + cron image for maps_runner
+├── docker-compose.yml
+├── crontab                    # Daily 03:00 job inside the container
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Part A — Windows screen capture
+
+### Requirements
+
+- Windows 10/11
+- MSVC (x64) with Windows SDK (GDI+, D3D11, DXGI)
+
+### Build
+
+From `screencap/` (Developer Command Prompt for VS):
+
+```bat
+cl /std:c++17 /EHsc /O2 screencap.cpp gdiplus.lib d3d11.lib dxgi.lib ole32.lib
+```
+
+### Run
+
+```bat
+screencap.exe gdi  screen.jpg
+screencap.exe dxgi screen_dxgi.jpg
+screencap.exe live frame_ 10 500
+```
+
+| Mode   | Meaning                                      |
+|--------|----------------------------------------------|
+| `gdi`  | Full virtual desktop via BitBlt → JPEG       |
+| `dxgi` | Single frame via Desktop Duplication → JPEG  |
+| `live` | N frames at interval_ms with filename prefix |
+
+---
+
+## Part B — Maps / Places scrapers
+
+### Requirements
+
+- Python 3.11+
+- Chromium for Playwright
+- Optional: `GOOGLE_MAPS_API_KEY` with **Places API (New)** enabled (GCP)
+
+### Install (local)
+
+```bash
 python -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
-pip install playwright
+pip install -r requirements.txt
 playwright install chromium
-pip install asyncio               # already stdlib on 3.11+, harmless
-Docker (recommended for VPS):
+```
 
-dockerfile
-# language: Dockerfile
-FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
-WORKDIR /app
-COPY gmaps_scraper.py .
-RUN pip install --no-cache-dir playwright
-CMD ["python", "gmaps_scraper.py"]
-Build: docker build -t gmaps-scraper .
-Run: docker run --rm -v $(pwd)/out:/app gmaps-scraper
+### Run — hybrid runner (recommended)
 
-4. Run it — step by step
-Edit the config block at the top of gmaps_scraper.py:
+Browser first; tops up via Places API if blocked or short of `MAX_RESULTS`.
 
-QUERY → e.g. "dentists in Lahore"
+```bash
+# Browser only (no API key)
+export QUERY="dentists in Lahore"
+export MAX_RESULTS=200
+export OUTFILE="./out/businesses.csv"
+python maps/maps_runner.py
 
-MAX_RESULTS → start at 50, raise gradually
+# Hybrid (recommended)
+export GOOGLE_MAPS_API_KEY="your_key"
+export QUERY="dentists in Lahore"
+export MAX_RESULTS=300
+export OUTFILE="./out/businesses.csv"
+python maps/maps_runner.py
+```
 
-OUTFILE → output path
+CSV columns: `name`, `phone`, `address`, `rating`, `reviews`, `website`, `maps_url`, `type`, `source`.
 
-First run in headed mode to watch it work — change headless=True to False. Confirms selectors still match.
+### Run — Places API only
 
-Execute:
+```bash
+export GOOGLE_MAPS_API_KEY="your_key"
+export QUERY="coffee shops in Austin"
+export MAX_RESULTS=60
+python maps/places_scraper.py
+```
 
-bash
-python gmaps_scraper.py
-Watch the scroll loop. It scrolls the feed until MAX_RESULTS or 3 stall cycles. If it stalls early, Google changed the layout — dump page HTML and re-pin selectors.
+Text Search returns at most **60** results per query (20 per page). Split by neighborhood/postal and union if you need more; `maps_runner` dedupes overlaps.
 
-Check businesses.csv. Columns: name, phone, address, rating, website. Empty fields mean a selector drifted.
+### Run — simple browser scraper
 
-Back to headless for scheduled runs.
+Edit `QUERY` / `MAX_RESULTS` / `OUTFILE` at the top of `maps/gmaps_browser_scraper.py`, then:
 
-5. Scheduling
-Linux cron — daily at 03:00:
+```bash
+python maps/gmaps_browser_scraper.py
+```
 
-text
-0 3 * * * cd /opt/gmaps && /opt/gmaps/venv/bin/python gmaps_scraper.py >> run.log 2>&1
-Windows Task Scheduler: action = python.exe, argument = full path to script, trigger = daily.
+### Proxies
 
-6. Scaling — proxies and rotation
-Insert before browser = await p.chromium.launch(...):
+- `maps_runner.py` has an in-file `PROXY_POOL` (commented examples).
+- Standalone helpers live in `maps/proxy_rotation.py` if you want to wire rotation into another launch path.
 
-python
-proxy = {
-    "server": "http://resi.proxy.provider:8000",
-    "username": "USER",
-    "password": "PASS",
-}
-browser = await p.chromium.launch(headless=True, proxy=proxy)
-Rotate the proxy per run, or per N cards. Residential IPs are the only ones that survive long runs.
+### Docker
 
-7. Keeping it alive
-Symptom	Cause	Fix
-Empty fields	Google changed aria-label	dump one card's HTML, re-pin selectors
-Feed won't scroll	layout A/B test	slow scroll, longer sleeps, or wait for div[role="feed"] again
-CAPTCHA / "unusual traffic"	IP flagged	rotate proxy, slow down, cap run size
-TimeoutError on selector	element renamed	add fallback selector list
-0 rows	consent wall or geo-block	set Accept-Language header, add consent click variants
-8. Legal / operational limits
-Google Maps ToS forbids automated scraping — you're operating against it, so treat the IP as burnable.
+```bash
+mkdir -p out
+docker compose up -d --build
+# CSV / logs land in ./out
+```
 
-Personal data (phone/name) in the EU/UK falls under GDPR if you store it — you become the data controller. Store what you need, delete the rest.
+Env knobs (see `docker-compose.yml`): `QUERY`, `MAX_RESULTS`, `GOOGLE_MAPS_API_KEY`, `ROTATE_EVERY`, `OUTFILE`, `TZ`.
 
-For production/commercial use, use the Places API (places.googleapis.com/v1/places:searchText) — same fields, ToS-clean, ~$17/1k requests.
+One-shot without cron:
 
-want me to add the proxy rotation code, a Docker-compose with cron, or the Places API version?
+```bash
+docker build -t gmaps-scraper .
+docker run --rm -e QUERY="dentists in Lahore" -e MAX_RESULTS=50 \
+  -e OUTFILE=/app/out/businesses.csv -v "$(pwd)/out:/app/out" \
+  --entrypoint python gmaps-scraper maps/maps_runner.py
+```
 
+### Cost / behavior notes
+
+| Scenario                         | Browser | API   | Approx. cost |
+|----------------------------------|---------|-------|--------------|
+| Clean run, 300 results           | all     | none  | $0           |
+| Blocked at landing, 300 wanted   | 0       | ≤60*  | API fees     |
+| Blocked at card 120, 300 wanted  | 120     | top-up| API fees     |
+| No API key, blocked              | partial | none  | $0           |
+
+\*Places Text Search caps at 60 per query without further query splitting.
+
+---
+
+## Legal / operational limits
+
+- Automated scraping of Google Maps can conflict with Google’s Terms of Service. Treat IPs as burnable; prefer Places API for production/commercial use.
+- Personal data (names/phones) may trigger GDPR/other privacy duties if you store it — keep only what you need.
+- Official API: [Places API (New) Text Search](https://developers.google.com/maps/documentation/places/web-service/text-search).
+
+---
+
+## Quick verification checklist
+
+1. **Screencap:** build with MSVC → `screencap.exe gdi test.jpg` → image created.
+2. **Maps local:** `pip install -r requirements.txt && playwright install chromium` → `OUTFILE=./out/t.csv MAX_RESULTS=5 python maps/maps_runner.py`.
+3. **Places only:** set `GOOGLE_MAPS_API_KEY` → `python maps/places_scraper.py`.
+4. **Docker:** `docker compose up -d --build` → check `./out` and container logs.

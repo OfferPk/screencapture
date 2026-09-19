@@ -1,4 +1,3 @@
-# language: YAML
 version: "3.9"
 
 services:
@@ -10,9 +9,13 @@ services:
       - TZ=Asia/Karachi
       - QUERY=dentists in Lahore
       - MAX_RESULTS=500
+      # Optional: enables Places API fallback / top-up in maps_runner.py
+      # - GOOGLE_MAPS_API_KEY=your_key_here
+      - ROTATE_EVERY=150
+      - OUTFILE=/app/out/businesses.csv
     volumes:
       - ./out:/app/out
-    # no ports — it's a batch job, not a service
+    # Batch job only — no published ports
     logging:
       driver: json-file
       options:

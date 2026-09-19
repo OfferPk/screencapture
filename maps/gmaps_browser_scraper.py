@@ -1,4 +1,4 @@
-# language: Python 3.11, file: gmaps_scraper.py
+# language: Python 3.11, file: gmaps_browser_scraper.py
 # target: Google Maps search results via Playwright (headless)
 # note: Google's ToS restricts automated scraping — use at your own risk,
 # rate-limit hard, and prefer the official Places API for production.

@@ -1,0 +1,2 @@
+# Daily Maps scrape at 03:00 (container TZ, default Asia/Karachi)
+0 3 * * * cd /app && /usr/bin/python maps/maps_runner.py >> /app/out/run.log 2>&1

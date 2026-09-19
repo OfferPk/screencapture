@@ -1,5 +1,5 @@
 # language: Python 3.11 — proxy rotation module
-# add to gmaps_scraper.py, replace the browser launch block
+# Import helpers from maps_runner or wire into a browser launch block.
 
 import random
 import httpx

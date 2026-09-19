@@ -1,4 +1,0 @@
-export GOOGLE_MAPS_API_KEY="AIza..."
-export QUERY="coffee shops in Austin"
-export MAX_RESULTS=60
-python places_scraper.py
