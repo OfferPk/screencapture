@@ -1,4 +1,4 @@
-# language: Dockerfile
+# Playwright + cron image for scheduled Google Maps / Places scrapes
 FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
 
 ENV TZ=Asia/Karachi
@@ -7,11 +7,13 @@ RUN apt-get update && apt-get install -y cron tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY gmaps_scraper.py .
-RUN pip install --no-cache-dir playwright httpx
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
+COPY maps/ ./maps/
 COPY crontab /etc/cron.d/gmaps-cron
 RUN chmod 0644 /etc/cron.d/gmaps-cron \
-    && crontab /etc/cron.d/gmaps-cron
+    && crontab /etc/cron.d/gmaps-cron \
+    && mkdir -p /app/out
 
 CMD ["cron", "-f"]

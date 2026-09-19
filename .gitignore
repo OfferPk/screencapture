@@ -1,0 +1,32 @@
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Outputs
+out/
+*.csv
+*.jpg
+*.jpeg
+*.png
+*.bmp
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Build
+*.obj
+*.exe
+*.pdb
