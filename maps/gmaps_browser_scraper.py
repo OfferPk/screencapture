@@ -1,0 +1,119 @@
+# language: Python 3.11, file: gmaps_browser_scraper.py
+# target: Google Maps search results via Playwright (headless)
+# note: Google's ToS restricts automated scraping — use at your own risk,
+# rate-limit hard, and prefer the official Places API for production.
+
+import asyncio
+import csv
+import re
+from playwright.async_api import async_playwright
+
+
+QUERY = "coffee shops in Austin, TX"
+MAX_RESULTS = 200
+OUTFILE = "businesses.csv"
+
+
+async def scrape():
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            )
+        )
+
+        url = f"https://www.google.com/maps/search/{QUERY.replace(' ', '+')}"
+        await page.goto(url, wait_until="domcontentloaded")
+
+        # consent / cookie wall
+        for sel in ['button:has-text("Accept all")', 'button:has-text("I agree")']:
+            try:
+                await page.click(sel, timeout=3000)
+                break
+            except Exception:
+                pass
+
+        # wait for results feed
+        await page.wait_for_selector('div[role="feed"]', timeout=15000)
+
+        # scroll the feed to load more cards
+        feed = page.locator('div[role="feed"]')
+        last_count = 0
+        stall = 0
+        while stall < 3:
+            cards = await page.locator('div[role="feed"] > div > div[role="article"]').count()
+            if cards >= MAX_RESULTS:
+                break
+            if cards == last_count:
+                stall += 1
+            else:
+                stall = 0
+            last_count = cards
+            await feed.evaluate("el => el.scrollBy(0, 3000)")
+            await asyncio.sleep(1.2)
+
+        cards = page.locator('div[role="feed"] > div > div[role="article"]')
+        total = min(await cards.count(), MAX_RESULTS)
+
+        rows = []
+        for i in range(total):
+            card = cards.nth(i)
+            try:
+                await card.click()
+                await page.wait_for_selector('h1', timeout=5000)
+                await asyncio.sleep(0.4)
+            except Exception:
+                continue
+
+            name = await _safe_text(page, 'h1')
+            address = await _safe_attr(page, 'button[data-item-id="address"]', "aria-label")
+            phone = await _safe_attr(page, 'button[data-item-id^="phone:tel:"]', "aria-label")
+            website = await _safe_attr(page, 'a[data-item-id="authority"]', "href")
+            rating = await _safe_attr(page, 'div[role="img"][aria-label*="stars"]', "aria-label")
+
+            rows.append({
+                "name": name,
+                "phone": _clean_phone(phone),
+                "address": _clean_label(address, "Address: "),
+                "rating": rating,
+                "website": website,
+            })
+
+            await asyncio.sleep(0.3)
+
+        await browser.close()
+
+    with open(OUTFILE, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["name", "phone", "address", "rating", "website"])
+        w.writeheader()
+        w.writerows(rows)
+    print(f"wrote {len(rows)} rows -> {OUTFILE}")
+
+
+async def _safe_text(page, sel):
+    try:
+        return (await page.locator(sel).first.inner_text(timeout=3000)).strip()
+    except Exception:
+        return ""
+
+
+async def _safe_attr(page, sel, attr):
+    try:
+        return (await page.locator(sel).first.get_attribute(attr, timeout=3000)) or ""
+    except Exception:
+        return ""
+
+
+def _clean_phone(raw):
+    return re.sub(r"^Phone:\s*", "", raw or "").strip()
+
+
+def _clean_label(raw, prefix):
+    return re.sub(rf"^{re.escape(prefix)}", "", raw or "").strip()
+
+
+if __name__ == "__main__":
+    asyncio.run(scrape())
